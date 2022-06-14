@@ -1,0 +1,158 @@
+#include <LiquidCrystal.h>
+
+LiquidCrystal lcd(10, 9, 6, 5, 4, 3);
+#define distance_Pin 8
+#define plusone_Pin 13
+#define plusten_Pin 12
+#define PIEZO 11
+
+const byte reset_Pin = 2; //interrupt pin
+
+volatile byte state = LOW;
+int cnt = 0;
+int set_cnt = 0;
+int one_buf = 0;
+int ten_buf = 0;
+int exe_buf = 0;
+int end_buf = 0;
+
+unsigned long start_time = 0;
+unsigned long check_time = 0;
+unsigned long count_time = 0;
+
+
+
+long readUltrasonicDistance(int triggerPin, int echoPin)
+{
+  pinMode(triggerPin, OUTPUT);
+  digitalWrite(triggerPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(triggerPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(triggerPin, LOW);
+  pinMode(echoPin, INPUT);
+  return pulseIn(echoPin, HIGH);
+}
+
+void setup()
+{
+  Serial.begin(9600);
+  pinMode(plusone_Pin, INPUT);
+  pinMode(plusten_Pin, INPUT);
+  pinMode(reset_Pin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(reset_Pin), reset, FALLING);
+  lcd.begin(16, 2);
+  lcd.clear();
+}
+
+void reset()
+{
+  state = !state;
+  lcd.clear();
+}
+
+void alarm()
+{
+  for(int i = 0; i < 5; i++){
+    for(int j = 0; j < 3; j++){
+      tone(PIEZO, 1000);
+      delay(120);
+      noTone(PIEZO);
+      delay(120);
+    }
+    delay(900);
+  }
+}
+
+void loop()
+{
+  //cm 정의, 참고로 거리센서의 인지 한계는 2~336cm
+  int cm = 0.01723 * readUltrasonicDistance(distance_Pin, distance_Pin);
+
+  //운동횟수 설정 단계 (시작 전)
+  if(state == LOW){
+    cnt = 0;
+    if(end_buf == 0){
+      lcd.setCursor(0,0);
+      lcd.println("SETTING...      ");
+      lcd.setCursor(0,1);
+      lcd.print("SET COUNT: ");
+      lcd.print(set_cnt);
+    }
+    //set_cnt 1의 자리 설정
+    if(digitalRead(plusone_Pin)){
+      set_cnt ++;
+      one_buf ++;
+      if(one_buf == 10){
+        set_cnt -= 10;
+        one_buf = 0;
+      }
+    }
+    //set_cnt 10의 자리 설정
+    if(digitalRead(plusten_Pin)){
+      set_cnt += 10;
+      ten_buf ++;
+      if(ten_buf == 10){
+        set_cnt -= 100;
+        ten_buf = 0;
+        lcd.clear();
+      }
+    }
+    //set_cnt 정상작동 검토
+    Serial.print(digitalRead(plusone_Pin));
+    Serial.print(digitalRead(plusten_Pin));
+    Serial.print(digitalRead(reset_Pin));
+    Serial.print(" , set_cnt = ");
+    Serial.println(set_cnt);
+    delay(200);
+  }
+  //운동 시작 (시작 후)
+  if(state == HIGH){
+    end_buf = 1;
+    if(cm <= 10 && exe_buf ==0){
+    	cnt ++;
+    	Serial.print(cm);
+  		Serial.print("cm, ");
+    	Serial.print("cnt= ");
+    	Serial.println(cnt);
+    	exe_buf = 1;
+    	delay(1000);
+    }
+  	else if(cm > 10 && exe_buf == 1){
+    	exe_buf = 0;
+    }
+    lcd.setCursor(0,0);
+    lcd.print("START!!: ");
+    lcd.print(set_cnt);
+    lcd.setCursor(0,1);
+    lcd.print("NOW COUNT: ");
+    lcd.print(cnt);
+    //운동 횟수를 다 채우면 알림음과 휴식 시간 1분 카운트 시작
+    if(cnt == set_cnt){
+      lcd.clear();
+      lcd.print("END!! ");
+      start_time = millis() / 1000;
+      alarm();
+      cnt = 0;
+      exe_buf = 0;
+      end_buf = 1;
+      state = LOW;
+    }
+  }
+  //휴식 시간 1분 카운트가 완료되면 알림음 시작
+  if(state == LOW && end_buf == 1){
+    check_time = millis() / 1000;
+    count_time = check_time - start_time;
+    lcd.setCursor(0,0);
+    lcd.print("END!! ");
+    lcd.setCursor(0,1);
+    lcd.print("TIMER: ");
+    lcd.print(count_time);
+  	Serial.print(count_time);
+  	Serial.println("seconds");
+    if(count_time >= 60 && count_time <=63){
+      end_buf = 0;
+      alarm();
+    }
+  }
+}
